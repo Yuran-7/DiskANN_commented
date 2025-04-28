@@ -2,13 +2,13 @@
 // Licensed under the MIT license.
 
 #include <boost/program_options.hpp>
-#include <chrono>
+#include <chrono>   // 计时，提供类型安全和高精度的时间处理功能
 #include <cstdio>
 #include <cstring>
 #include <random>
 #include <string>
 #include <tuple>
-#include "filter_utils.h"
+#include "filter_utils.h"   // include/filter_utils.h
 #include <omp.h>
 #ifndef _WINDOWS
 #include <sys/uio.h>
@@ -40,7 +40,7 @@ inline void print_progress(double percentage)
  */
 inline size_t random(size_t range_from, size_t range_to)
 {
-    std::random_device rand_dev;
+    std::random_device rand_dev;    // 每次调用生成的结果都不一样，apps/new/random_dev.cpp
     std::mt19937 generator(rand_dev());
     std::uniform_int_distribution<size_t> distr(range_from, range_to);
     return distr(generator);
@@ -371,6 +371,7 @@ int main(int argc, char **argv)
     else
         throw;
 #else
+    // compat兼容
     if (data_type == "uint8")
         label_id_to_orig_id_map = diskann::generate_label_specific_vector_files_compat<uint8_t>(
             input_data_path, labels_to_number_of_points, point_ids_to_labels, all_labels);

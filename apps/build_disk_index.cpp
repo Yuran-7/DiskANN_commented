@@ -15,12 +15,14 @@ namespace po = boost::program_options;
 
 int main(int argc, char **argv)
 {
+    // 相比于内存的多了个codebook_prefix
     std::string data_type, dist_fn, data_path, index_path_prefix, codebook_prefix, label_file, universal_label,
         label_type;
-    uint32_t num_threads, R, L, disk_PQ, build_PQ, QD, Lf, filter_threshold;
-    float B, M;
+    // 相比于内存的多了后面三个，QD表示压缩之后的维度
+    uint32_t num_threads, R, L, Lf, build_PQ, disk_PQ, QD, filter_threshold;
+    float B, M; // search_DRAM_budget, build_DRAM_budget
     bool append_reorder_data = false;
-    bool use_opq = false;
+    bool use_opq = false;   // Optimized Product Quantization
 
     po::options_description desc{
         program_options_utils::make_program_description("build_disk_index", "Build a disk-based index.")};
@@ -60,6 +62,8 @@ int main(int argc, char **argv)
         optional_configs.add_options()("PQ_disk_bytes", po::value<uint32_t>(&disk_PQ)->default_value(0),
                                        "Number of bytes to which vectors should be compressed "
                                        "on SSD; 0 for no compression");
+        // 用于控制在构建磁盘索引时，是否将全精度数据附加到索引中，以支持后续的重排序操作
+        // 在近似最近邻搜索中，初步搜索可能基于压缩向量进行。为了提高最终结果的精度，可以使用全精度数据对初步结果进行重排序（Refinement）
         optional_configs.add_options()("append_reorder_data", po::bool_switch()->default_value(false),
                                        "Include full precision data in the index. Use only in "
                                        "conjuction with compressed data on SSD.");
@@ -168,6 +172,7 @@ int main(int argc, char **argv)
                                                          metric, use_opq, codebook_prefix, use_filters, label_file,
                                                          universal_label, filter_threshold, Lf);
             else if (data_type == std::string("uint8"))
+                // 区别就是这里少了一个uint16_t
                 return diskann::build_disk_index<uint8_t>(data_path.c_str(), index_path_prefix.c_str(), params.c_str(),
                                                           metric, use_opq, codebook_prefix, use_filters, label_file,
                                                           universal_label, filter_threshold, Lf);

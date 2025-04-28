@@ -6,15 +6,16 @@
 #include "gperftools/malloc_extension.h"
 #endif
 #include "pq.h"
-#include "partition.h"
+#include "partition.h"  // include/partition.h
 #include "math_utils.h"
-#include "tsl/robin_map.h"
+#include "tsl/robin_map.h"  // include/tsl/robin_map.h
 
 // block size for reading/processing large files and matrices in blocks
 #define BLOCK_SIZE 5000000
 
 namespace diskann
 {
+// pq.h中的类FixedChunkPQTable
 FixedChunkPQTable::FixedChunkPQTable()
 {
 }

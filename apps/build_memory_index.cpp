@@ -5,9 +5,9 @@
 #include <cstring>
 #include <boost/program_options.hpp>
 
-#include "index.h"
+#include "index.h"  // include/index.h
 #include "utils.h"
-#include "program_options_utils.hpp"
+#include "program_options_utils.hpp"    // include/program_options_utils.hpp
 
 #ifndef _WINDOWS
 #include <sys/mman.h>
@@ -29,14 +29,18 @@ int main(int argc, char **argv)
     float alpha;
     bool use_pq_build, use_opq;
 
+    // kgraph中po::options_description desc_visible("General options");
     po::options_description desc{
-        program_options_utils::make_program_description("build_memory_index", "Build a memory-based DiskANN index.")};
+        // 返回一个字符串
+        program_options_utils::make_program_description("build_memory_index", "Build a memory-based DiskANN index.")
+    };
     try
     {
         desc.add_options()("help,h", "Print information on arguments");
 
         // Required parameters
         po::options_description required_configs("Required");
+        // 第三个参数是一个描述字符串
         required_configs.add_options()("data_type", po::value<std::string>(&data_type)->required(),
                                        program_options_utils::DATA_TYPE_DESCRIPTION);
         required_configs.add_options()("dist_fn", po::value<std::string>(&dist_fn)->required(),
@@ -61,6 +65,7 @@ int main(int argc, char **argv)
                                        program_options_utils::BUIlD_GRAPH_PQ_BYTES);
         optional_configs.add_options()("use_opq", po::bool_switch()->default_value(false),
                                        program_options_utils::USE_OPQ);
+        // 有逗号，没有第一行的元数据
         optional_configs.add_options()("label_file", po::value<std::string>(&label_file)->default_value(""),
                                        program_options_utils::LABEL_FILE);
         optional_configs.add_options()("universal_label", po::value<std::string>(&universal_label)->default_value(""),
@@ -75,12 +80,14 @@ int main(int argc, char **argv)
         desc.add(required_configs).add(optional_configs);
 
         po::variables_map vm;
+        // po::store(...)，将解析结果存储到 vm 中
         po::store(po::parse_command_line(argc, argv, desc), vm);
         if (vm.count("help"))
         {
             std::cout << desc;
             return 0;
         }
+        // po::notify(...)，将 vm 中的值应用到变量中
         po::notify(vm);
         use_pq_build = (build_PQ_bytes > 0);
         use_opq = vm["use_opq"].as<bool>();
@@ -118,38 +125,38 @@ int main(int argc, char **argv)
                       << "  #threads: " << num_threads << std::endl;
 
         size_t data_num, data_dim;
-        diskann::get_bin_metadata(data_path, data_num, data_dim);
+        diskann::get_bin_metadata(data_path, data_num, data_dim);   // 获取data_num和data_dim
 
         auto index_build_params = diskann::IndexWriteParametersBuilder(L, R)
-                                      .with_filter_list_size(Lf)
+                                      .with_filter_list_size(Lf)    // 默认为0
                                       .with_alpha(alpha)
                                       .with_saturate_graph(false)
                                       .with_num_threads(num_threads)
                                       .build();
 
         auto filter_params = diskann::IndexFilterParamsBuilder()
-                                 .with_universal_label(universal_label)
-                                 .with_label_file(label_file)
-                                 .with_save_path_prefix(index_path_prefix)
+                                 .with_universal_label(universal_label) // 可选，默认为空字符串
+                                 .with_label_file(label_file)   // 可选，默认为空字符串
+                                 .with_save_path_prefix(index_path_prefix)  // 必写
                                  .build();
         auto config = diskann::IndexConfigBuilder()
                           .with_metric(metric)
                           .with_dimension(data_dim)
                           .with_max_points(data_num)
-                          .with_data_load_store_strategy(diskann::DataStoreStrategy::MEMORY)
+                          .with_data_load_store_strategy(diskann::DataStoreStrategy::MEMORY)    // 没得选的enum，只有MEMORY
                           .with_graph_load_store_strategy(diskann::GraphStoreStrategy::MEMORY)
                           .with_data_type(data_type)
-                          .with_label_type(label_type)
+                          .with_label_type(label_type)  // 默认uint
                           .is_dynamic_index(false)
                           .with_index_write_params(index_build_params)
                           .is_enable_tags(false)
-                          .is_use_opq(use_opq)
-                          .is_pq_dist_build(use_pq_build)
-                          .with_num_pq_chunks(build_PQ_bytes)
+                          .is_use_opq(use_opq)  // 默认false
+                          .is_pq_dist_build(use_pq_build)   // 默认false
+                          .with_num_pq_chunks(build_PQ_bytes)   // 默认0
                           .build();
 
-        auto index_factory = diskann::IndexFactory(config);
-        auto index = index_factory.create_instance();
+        auto index_factory = diskann::IndexFactory(config); // include/index_factory.h中的class
+        auto index = index_factory.create_instance();   // index的类型是unique_ptr<AbstractIndex>
         index->build(data_path, data_num, filter_params);
         index->save(index_path_prefix.c_str());
         index.reset();

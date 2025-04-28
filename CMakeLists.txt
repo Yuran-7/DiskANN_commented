@@ -26,7 +26,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT MSVC)
 	set(CMAKE_CXX_COMPILER g++)
 endif()
+message("CMake root: ${CMAKE_ROOT}")
 
+message("PROJECT_SOURCE_DIR: ${PROJECT_SOURCE_DIR}")    # /home/ysh/ANN/DiskANN
+message("CMAKE_MODULE_PATH: ${CMAKE_MODULE_PATH}")  # 空的
 set(CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake;${CMAKE_MODULE_PATH}")
 
 # Install nuget packages for dependencies.
@@ -53,14 +56,21 @@ endif()
 
 include_directories(${PROJECT_SOURCE_DIR}/include)
 
+message("PYBIND: ${PYBIND}")
 if(NOT PYBIND)
+    message("NOT PYBIND is: TRUE")
+else()
+    message("NOT PYBIND is: FALSE")
+endif()
+if(NOT PYBIND)
+    message("debug1...")
+    # DiskANN 会在这些检查点调用 TCMalloc 的内存释放机制（如 MallocExtension::ReleaseFreeMemory()），尝试将未使用的内存归还给操作系统，以减少内存占用
     set(DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS ON)
 endif()
 # It's necessary to include tcmalloc headers only if calling into MallocExtension interface.
 # For using tcmalloc in DiskANN tools, it's enough to just link with tcmalloc.
 if (DISKANN_RELEASE_UNUSED_TCMALLOC_MEMORY_AT_CHECKPOINTS)
     include_directories(${PROJECT_SOURCE_DIR}/gperftools/src)
-
     if (MSVC)
         include_directories(${PROJECT_SOURCE_DIR}/gperftools/src/windows)
     endif()
@@ -97,7 +107,7 @@ if (MSVC)
 endif()
 
 if(NOT MSVC)
-    find_package(Boost COMPONENTS program_options)
+    find_package(Boost COMPONENTS program_options)  # 找到了
 endif()
 
 # For Windows, fall back to nuget version if find_package didn't find it.
@@ -127,6 +137,7 @@ if (NOT Boost_FOUND)
 endif()
 
 include_directories(${Boost_INCLUDE_DIR})
+message("Boost_INCLUDE_DIR: ${Boost_INCLUDE_DIR}")  # /usr/include
 
 #MKL Config
 if (MSVC)
@@ -148,7 +159,7 @@ else()
     set(POSSIBLE_OMP_PATHS "/opt/intel/oneapi/compiler/latest/linux/compiler/lib/intel64_lin/libiomp5.so;/usr/lib/x86_64-linux-gnu/libiomp5.so;/opt/intel/lib/intel64_lin/libiomp5.so")
     foreach(POSSIBLE_OMP_PATH ${POSSIBLE_OMP_PATHS})
         if (EXISTS ${POSSIBLE_OMP_PATH})
-            get_filename_component(OMP_PATH ${POSSIBLE_OMP_PATH} DIRECTORY)
+            get_filename_component(OMP_PATH ${POSSIBLE_OMP_PATH} DIRECTORY) # /usr/lib/x86_64-linux-gnu/libiomp5.so
         endif()
     endforeach()
 
@@ -287,7 +298,7 @@ if(MSVC)
 else()
     set(ENV{TCMALLOC_LARGE_ALLOC_REPORT_THRESHOLD} 500000000000)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -mfma -msse2 -ftree-vectorize -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free -fopenmp -fopenmp-simd -funroll-loops -Wfatal-errors -DUSE_AVX2")
-    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -DDEBUG")
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -DDEBUG -O0")
     if (NOT PYBIND)
         set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -DNDEBUG -Ofast")
         if (NOT PORTABLE)
@@ -305,7 +316,9 @@ if (NOT PYBIND)
     add_subdirectory(apps/utils)
 endif()
 
-if (UNIT_TEST)
+message("UNIT_TEST: ${UNIT_TEST}")
+if (UNIT_TEST)  # false
+    message("debug2...")
     enable_testing()
     add_subdirectory(tests)
 endif()

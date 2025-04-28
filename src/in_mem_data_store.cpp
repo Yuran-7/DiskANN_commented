@@ -111,11 +111,11 @@ template <typename data_t> size_t InMemDataStore<data_t>::save(const std::string
 template <typename data_t> void InMemDataStore<data_t>::populate_data(const data_t *vectors, const location_t num_pts)
 {
     memset(_data, 0, _aligned_dim * sizeof(data_t) * num_pts);
+
     for (location_t i = 0; i < num_pts; i++)
     {
         std::memmove(_data + i * _aligned_dim, vectors + i * this->_dim, this->_dim * sizeof(data_t));
     }
-
     if (_distance_fn->preprocessing_required())
     {
         _distance_fn->preprocess_base_points(_data, this->_aligned_dim, num_pts);
@@ -125,6 +125,8 @@ template <typename data_t> void InMemDataStore<data_t>::populate_data(const data
 template <typename data_t> void InMemDataStore<data_t>::populate_data(const std::string &filename, const size_t offset)
 {
     size_t npts, ndim;
+    // 的二进制文件（filename）中读取向量数据，并将其加载到内存数据存储（_data_store）的 _data 数组中
+    // _data 是InMemDataStore类的成员变量，data_t *_data = nullptr;
     copy_aligned_data_from_file(filename.c_str(), _data, npts, ndim, _aligned_dim, offset);
 
     if ((location_t)npts > this->capacity())
@@ -143,7 +145,7 @@ template <typename data_t> void InMemDataStore<data_t>::populate_data(const std:
            << " is not equal to dimensions of data store: " << this->capacity() << "." << std::endl;
         throw diskann::ANNException(ss.str(), -1);
     }
-
+    // 如果需要预处理
     if (_distance_fn->preprocessing_required())
     {
         _distance_fn->preprocess_base_points(_data, this->_aligned_dim, this->capacity());
@@ -371,7 +373,7 @@ template <typename data_t> location_t InMemDataStore<data_t>::calculate_medoid()
             diff = (center[j] - (float)cur_vec[j]) * (center[j] - (float)cur_vec[j]);
             dist += diff;
         }
-    }
+    }   // for循环结束时，distances数组填满所有点到中心点的距离
     // find imin
     uint32_t min_idx = 0;
     float min_dist = distances[0];

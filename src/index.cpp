@@ -734,7 +734,7 @@ template <typename T, typename TagT, typename LabelT> uint32_t Index<T, TagT, La
 {
     // REFACTOR TODO: This function does not support multi-threaded calculation of medoid.
     // Must revisit if perf is a concern.
-    return _data_store->calculate_medoid();
+    return _data_store->calculate_medoid(); // in_mem_data_store.cpp中的函数
 }
 
 template <typename T, typename TagT, typename LabelT> std::vector<uint32_t> Index<T, TagT, LabelT>::get_init_ids()
@@ -788,20 +788,27 @@ bool Index<T, TagT, LabelT>::detect_common_filters(uint32_t point_id, bool searc
     return (common_filters.size() > 0);
 }
 
+// iterate_to_fixed_point(scratch, Lindex, init_ids, false, unused_filter_label, false);
+// Lindex = 100，init_ids 入口点，返回一个包含两个值的对<hops, cmps>
 template <typename T, typename TagT, typename LabelT>
 std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point(
     InMemQueryScratch<T> *scratch, const uint32_t Lsize, const std::vector<uint32_t> &init_ids, bool use_filter,
     const std::vector<LabelT> &filter_labels, bool search_invocation)
 {
+    // Neighbor包括 id，distance，expanded
     std::vector<Neighbor> &expanded_nodes = scratch->pool();
+    // NeighborPriorityQueue是一个类，在Neighbor.h中
     NeighborPriorityQueue &best_L_nodes = scratch->best_l_nodes();
-    best_L_nodes.reserve(Lsize);
+    best_L_nodes.reserve(Lsize);    // 类的成员函数
+    // 用于标记已访问的节点，分别使用 tsl::robin_set（哈希集）和 boost::dynamic_bitset（位集）
     tsl::robin_set<uint32_t> &inserted_into_pool_rs = scratch->inserted_into_pool_rs();
     boost::dynamic_bitset<> &inserted_into_pool_bs = scratch->inserted_into_pool_bs();
+    // 临时存储邻居ID和距离的向量
     std::vector<uint32_t> &id_scratch = scratch->id_scratch();
     std::vector<float> &dist_scratch = scratch->dist_scratch();
     assert(id_scratch.size() == 0);
 
+    // 查询向量的内存对齐指针
     T *aligned_query = scratch->aligned_query();
 
     float *pq_dists = nullptr;
@@ -814,8 +821,9 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point(
     }
 
     // Decide whether to use bitset or robin set to mark visited nodes
+    // 如果 total_num_points 小于 MAX_POINTS_FOR_USING_BITSET（1000万），使用 dynamic_bitset（fast_iterate=true），否则使用 robin_set
     auto total_num_points = _max_points + _num_frozen_pts;
-    bool fast_iterate = total_num_points <= MAX_POINTS_FOR_USING_BITSET;
+    bool fast_iterate = total_num_points <= MAX_POINTS_FOR_USING_BITSET;    // 一千万
 
     if (fast_iterate)
     {
@@ -829,12 +837,15 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point(
     }
 
     // Lambda to determine if a node has been visited
+    // 定义辅助 Lambda 函数
+    // 如果 fast_iterate=true，检查位集对应位是否为 0；否则检查哈希集中是否不存在该节点ID
     auto is_not_visited = [this, fast_iterate, &inserted_into_pool_bs, &inserted_into_pool_rs](const uint32_t id) {
         return fast_iterate ? inserted_into_pool_bs[id] == 0
                             : inserted_into_pool_rs.find(id) == inserted_into_pool_rs.end();
     };
 
     // Lambda to batch compute query<-> node distances in PQ space
+    // 初始化候选池
     auto compute_dists = [this, scratch, pq_dists](const std::vector<uint32_t> &ids, std::vector<float> &dists_out) {
         _pq_data_store->get_distance(scratch->aligned_query(), ids, dists_out, scratch);
     };
@@ -872,24 +883,26 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point(
             _pq_data_store->get_distance(aligned_query, ids, 1, distances, scratch);
             distance = distances[0];
 
-            Neighbor nn = Neighbor(id, distance);
-            best_L_nodes.insert(nn);
+            Neighbor nn = Neighbor(id, distance);   // 默认expanded为false
+            best_L_nodes.insert(nn);    // 插入优先队列
         }
     }
 
     uint32_t hops = 0;
     uint32_t cmps = 0;
 
-    while (best_L_nodes.has_unexpanded_node())
+    while (best_L_nodes.has_unexpanded_node()) // true
     {
+        // Neighbor类型
         auto nbr = best_L_nodes.closest_unexpanded();
         auto n = nbr.id;
 
         // Add node to expanded nodes to create pool for prune later
-        if (!search_invocation)
+        if (!search_invocation) // true，索引构建模式
         {
-            if (!use_filter)
+            if (!use_filter)    // true
             {
+                // scratch->pool()，vector<Neighbor>类型
                 expanded_nodes.emplace_back(nbr);
             }
             else
@@ -904,9 +917,9 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point(
         }
 
         // Find which of the nodes in des have not been visited before
-        id_scratch.clear();
+        id_scratch.clear(); // vector<uint32_t>
         dist_scratch.clear();
-        if (_dynamic_index)
+        if (_dynamic_index) // Index类中的成员变量，false
         {
             LockGuard guard(_locks[n]);
             for (auto id : _graph_store->get_neighbours(n))
@@ -929,9 +942,10 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point(
         else
         {
             _locks[n].lock();
-            auto nbrs = _graph_store->get_neighbours(n);
+            // Index类的成员变量std::unique_ptr<AbstractGraphStore> _graph_store;
+            auto nbrs = _graph_store->get_neighbours(n);    // auto n = nbr.id;
             _locks[n].unlock();
-            for (auto id : nbrs)
+            for (auto id : nbrs)    // 初始nbrs的大小为0
             {
                 assert(id < _max_points + _num_frozen_pts);
 
@@ -975,19 +989,22 @@ std::pair<uint32_t, uint32_t> Index<T, TagT, LabelT>::iterate_to_fixed_point(
     return std::make_pair(hops, cmps);
 }
 
+// search_for_point_and_prune(node, _indexingQueueSize, pruned_list, scratch);
+// node_是0到999999，_indexingQueueSize是100，pruned_list是空的，scratch是一个InMemQueryScratch对象，use_filter是false，filteredLindex是0
 template <typename T, typename TagT, typename LabelT>
 void Index<T, TagT, LabelT>::search_for_point_and_prune(int location, uint32_t Lindex,
                                                         std::vector<uint32_t> &pruned_list,
                                                         InMemQueryScratch<T> *scratch, bool use_filter,
                                                         uint32_t filteredLindex)
 {
-    const std::vector<uint32_t> init_ids = get_init_ids();
+    const std::vector<uint32_t> init_ids = get_init_ids();  // 获取ep和frozen点的id
     const std::vector<LabelT> unused_filter_label;
 
-    if (!use_filter)
+    if (!use_filter)    // true
     {
+        // 从内存数据存储（_data_store）中获取指定位置（location）的向量数据
         _data_store->get_vector(location, scratch->aligned_query());
-        iterate_to_fixed_point(scratch, Lindex, init_ids, false, unused_filter_label, false);
+        iterate_to_fixed_point(scratch, Lindex, init_ids, false, unused_filter_label, false);   // 获取候选列表
     }
     else
     {
@@ -1031,8 +1048,8 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune(int location, uint32_t L
         std::copy(best_candidate_pool.begin(), best_candidate_pool.end(), std::back_inserter(scratch->pool()));
     }
 
-    auto &pool = scratch->pool();
-
+    auto &pool = scratch->pool();   // location为0，pool.size()=1 location为1，pool.size()=2
+    // 从候选列表中移除自身点以避免自环
     for (uint32_t i = 0; i < pool.size(); i++)
     {
         if (pool[i].id == (uint32_t)location)
@@ -1042,15 +1059,15 @@ void Index<T, TagT, LabelT>::search_for_point_and_prune(int location, uint32_t L
         }
     }
 
-    if (pruned_list.size() > 0)
+    if (pruned_list.size() > 0) // pruned_list传进来的时候是空的，所以这里不可能大于0
     {
         throw diskann::ANNException("ERROR: non-empty pruned_list passed", -1, __FUNCSIG__, __FILE__, __LINE__);
     }
+    // 调用 prune_neighbors 根据距离和其他标准选择最佳邻居
+    prune_neighbors(location, pool, pruned_list, scratch);  // 节点2调用之后本来pool有0，1，12374，但经过这个函数之后变为0，1
 
-    prune_neighbors(location, pool, pruned_list, scratch);
-
-    assert(!pruned_list.empty());
-    assert(_graph_store->get_total_points() == _max_points + _num_frozen_pts);
+    assert(!pruned_list.empty());   // pruned_list.size()=1
+    assert(_graph_store->get_total_points() == _max_points + _num_frozen_pts);  // 一百万
 }
 
 template <typename T, typename TagT, typename LabelT>
@@ -1067,11 +1084,12 @@ void Index<T, TagT, LabelT>::occlude_list(const uint32_t location, std::vector<N
     assert(result.size() == 0);
     if (pool.size() > maxc)
         pool.resize(maxc);
-    std::vector<float> &occlude_factor = scratch->occlude_factor();
+    std::vector<float> &occlude_factor = scratch->occlude_factor(); // size = 0
     // occlude_list can be called with the same scratch more than once by
     // search_for_point_and_add_link through inter_insert.
     occlude_factor.clear();
     // Initialize occlude_factor to pool.size() many 0.0f values for correctness
+    // 插入的位置，插入的数量，插入的值
     occlude_factor.insert(occlude_factor.end(), pool.size(), 0.0f);
 
     float cur_alpha = 1;
@@ -1079,6 +1097,7 @@ void Index<T, TagT, LabelT>::occlude_list(const uint32_t location, std::vector<N
     {
         // used for MIPS, where we store a value of eps in cur_alpha to
         // denote pruned out entries which we can skip in later rounds.
+        // 对于最大内积搜索（MIPS），eps 被设置为 cur_alpha + 0.01f，用于标记已修剪的点，避免在后续轮次重复处理
         float eps = cur_alpha + 0.01f;
 
         for (auto iter = pool.begin(); result.size() < degree && iter != pool.end(); ++iter)
@@ -1088,6 +1107,7 @@ void Index<T, TagT, LabelT>::occlude_list(const uint32_t location, std::vector<N
                 continue;
             }
             // Set the entry to float::max so that is not considered again
+            // 将当前候选点的 occlude_factor 设置为 float::max，确保它在后续迭代中不再被考虑
             occlude_factor[iter - pool.begin()] = std::numeric_limits<float>::max();
             // Add the entry to the result if its not been deleted, and doesn't
             // add a self loop
@@ -1095,7 +1115,7 @@ void Index<T, TagT, LabelT>::occlude_list(const uint32_t location, std::vector<N
             {
                 if (iter->id != location)
                 {
-                    result.push_back(iter->id);
+                    result.push_back(iter->id); // 没被删除，且不是自身点
                 }
             }
 
@@ -1107,7 +1127,7 @@ void Index<T, TagT, LabelT>::occlude_list(const uint32_t location, std::vector<N
                     continue;
 
                 bool prune_allowed = true;
-                if (_filtered_index)
+                if (_filtered_index)    // false
                 {
                     uint32_t a = iter->id;
                     uint32_t b = iter2->id;
@@ -1124,13 +1144,15 @@ void Index<T, TagT, LabelT>::occlude_list(const uint32_t location, std::vector<N
                             break;
                     }
                 }
-                if (!prune_allowed)
+                if (!prune_allowed) // false
                     continue;
 
                 float djk = _data_store->get_distance(iter2->id, iter->id);
                 if (_dist_metric == diskann::Metric::L2 || _dist_metric == diskann::Metric::COSINE)
                 {
-                    occlude_factor[t] = (djk == 0) ? std::numeric_limits<float>::max()
+                    // 如果两点之间的距离为0，则设置为最大值
+                    // 否则，更新 occlude_factor[t] 为当前值和 djk 的最大值
+                    occlude_factor[t] = (djk == 0) ? std::numeric_limits<float>::max()  // 分母不能为0
                                                    : std::max(occlude_factor[t], iter2->distance / djk);
                 }
                 else if (_dist_metric == diskann::Metric::INNER_PRODUCT)
@@ -1149,6 +1171,7 @@ void Index<T, TagT, LabelT>::occlude_list(const uint32_t location, std::vector<N
     }
 }
 
+// prune_neighbors(location, pool, pruned_list, scratch);
 template <typename T, typename TagT, typename LabelT>
 void Index<T, TagT, LabelT>::prune_neighbors(const uint32_t location, std::vector<Neighbor> &pool,
                                              std::vector<uint32_t> &pruned_list, InMemQueryScratch<T> *scratch)
@@ -1170,7 +1193,7 @@ void Index<T, TagT, LabelT>::prune_neighbors(const uint32_t location, std::vecto
 
     // If using _pq_build, over-write the PQ distances with actual distances
     // REFACTOR PQ: TODO: How to get rid of this!?
-    if (_pq_dist)
+    if (_pq_dist)   // false
     {
         for (auto &ngh : pool)
             ngh.distance = _data_store->get_distance(ngh.id, location);
@@ -1184,7 +1207,7 @@ void Index<T, TagT, LabelT>::prune_neighbors(const uint32_t location, std::vecto
     occlude_list(location, pool, alpha, range, max_candidate_size, pruned_list, scratch);
     assert(pruned_list.size() <= range);
 
-    if (_saturate_graph && alpha > 1)
+    if (_saturate_graph && alpha > 1)   // false
     {
         for (const auto &node : pool)
         {
@@ -1214,13 +1237,13 @@ void Index<T, TagT, LabelT>::inter_insert(uint32_t n, std::vector<uint32_t> &pru
         bool prune_needed = false;
         {
             LockGuard guard(_locks[des]);
-            auto &des_pool = _graph_store->get_neighbours(des);
-            if (std::find(des_pool.begin(), des_pool.end(), n) == des_pool.end())
+            auto &des_pool = _graph_store->get_neighbours(des); // des_pool.size()=0
+            if (std::find(des_pool.begin(), des_pool.end(), n) == des_pool.end())   // 要查找的值是n（初始为0）
             {
-                if (des_pool.size() < (uint64_t)(defaults::GRAPH_SLACK_FACTOR * range))
+                if (des_pool.size() < (uint64_t)(defaults::GRAPH_SLACK_FACTOR * range)) // R，96
                 {
                     // des_pool.emplace_back(n);
-                    _graph_store->add_neighbour(des, n);
+                    _graph_store->add_neighbour(des, n);    // 从des指向n的边
                     prune_needed = false;
                 }
                 else
@@ -1265,26 +1288,27 @@ void Index<T, TagT, LabelT>::inter_insert(uint32_t n, std::vector<uint32_t> &pru
 template <typename T, typename TagT, typename LabelT>
 void Index<T, TagT, LabelT>::inter_insert(uint32_t n, std::vector<uint32_t> &pruned_list, InMemQueryScratch<T> *scratch)
 {
-    inter_insert(n, pruned_list, _indexingRange, scratch);
+    inter_insert(n, pruned_list, _indexingRange, scratch);   // 4个参数
 }
 
 template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT>::link()
 {
     uint32_t num_threads = _indexingThreads;
-    if (num_threads != 0)
+    if (num_threads != 0)   // 16
         omp_set_num_threads(num_threads);
 
     /* visit_order is a vector that is initialized to the entire graph */
     std::vector<uint32_t> visit_order;
     std::vector<diskann::Neighbor> pool, tmp;
     tsl::robin_set<uint32_t> visited;
-    visit_order.reserve(_nd + _num_frozen_pts);
+    visit_order.reserve(_nd + _num_frozen_pts); // _num_frozen_pts = 0，nd_ = 1000000
     for (uint32_t i = 0; i < (uint32_t)_nd; i++)
     {
         visit_order.emplace_back(i);
     }
 
     // If there are any frozen points, add them all.
+    // 不走这个for循环
     for (uint32_t frozen = (uint32_t)_max_points; frozen < _max_points + _num_frozen_pts; frozen++)
     {
         visit_order.emplace_back(frozen);
@@ -1294,28 +1318,34 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
     if (_num_frozen_pts > 0)
         _start = (uint32_t)_max_points;
     else
-        _start = calculate_entry_point();
+        _start = calculate_entry_point();   // _start是Index类的成员变量，就是entry_point
 
     diskann::Timer link_timer;
 
-#pragma omp parallel for schedule(dynamic, 2048)
+// 使用动态调度，线程不会一次性分配所有迭代，而是按需获取
+// 每次一个线程完成手头的任务，它会从剩余的迭代中获取最多 2048 次迭代的任务
+// #pragma omp parallel for schedule(dynamic, 2048)
     for (int64_t node_ctr = 0; node_ctr < (int64_t)(visit_order.size()); node_ctr++)
     {
         auto node = visit_order[node_ctr];
 
         // Find and add appropriate graph edges
-        ScratchStoreManager<InMemQueryScratch<T>> manager(_query_scratch);
+        // Index类中的成员变量ConcurrentQueue<InMemQueryScratch<T> *> _query_scratch;
+        ScratchStoreManager<InMemQueryScratch<T>> manager(_query_scratch);  // 两个类都在include/scratch.h中
+        // 从对象池中获取一个可用的 InMemQueryScratch<T> 对象
         auto scratch = manager.scratch_space();
+
         std::vector<uint32_t> pruned_list;
-        if (_filtered_index)
+        if (_filtered_index)    // false
         {
             search_for_point_and_prune(node, _indexingQueueSize, pruned_list, scratch, true, _filterIndexingQueueSize);
         }
         else
-        {
+        {   
+            // _indexingQueueSize = 100，返回的最核心的是pruned_list
             search_for_point_and_prune(node, _indexingQueueSize, pruned_list, scratch);
         }
-        assert(pruned_list.size() > 0);
+        assert(pruned_list.size() > 0); // 不大于0报错
 
         {
             LockGuard guard(_locks[node]);
@@ -1341,7 +1371,7 @@ template <typename T, typename TagT, typename LabelT> void Index<T, TagT, LabelT
     for (int64_t node_ctr = 0; node_ctr < (int64_t)(visit_order.size()); node_ctr++)
     {
         auto node = visit_order[node_ctr];
-        if (_graph_store->get_neighbours((location_t)node).size() > _indexingRange)
+        if (_graph_store->get_neighbours((location_t)node).size() > _indexingRange) // 如果邻居数量大于
         {
             ScratchStoreManager<InMemQueryScratch<T>> manager(_query_scratch);
             auto scratch = manager.scratch_space();
@@ -1513,7 +1543,7 @@ void Index<T, TagT, LabelT>::build_with_data_populated(const std::vector<TagT> &
     if (_nd < 1)
         throw ANNException("Error: Trying to build an index with 0 points", -1, __FUNCSIG__, __FILE__, __LINE__);
 
-    if (_enable_tags && tags.size() != _nd)
+    if (_enable_tags && tags.size() != _nd) // 只要_enable_tags为false，好像就会报错
     {
         std::stringstream stream;
         stream << "ERROR: Driver requests loading " << _nd << " points from file,"
@@ -1521,7 +1551,7 @@ void Index<T, TagT, LabelT>::build_with_data_populated(const std::vector<TagT> &
         diskann::cerr << stream.str() << std::endl;
         throw diskann::ANNException(stream.str(), -1, __FUNCSIG__, __FILE__, __LINE__);
     }
-    if (_enable_tags)
+    if (_enable_tags)   // false
     {
         for (size_t i = 0; i < tags.size(); ++i)
         {
@@ -1530,20 +1560,22 @@ void Index<T, TagT, LabelT>::build_with_data_populated(const std::vector<TagT> &
         }
     }
 
-    uint32_t index_R = _indexingRange;
-    uint32_t num_threads_index = _indexingThreads;
-    uint32_t index_L = _indexingQueueSize;
-    uint32_t maxc = _indexingMaxC;
+    uint32_t index_R = _indexingRange;  // 96
+    uint32_t num_threads_index = _indexingThreads;  // 16
+    uint32_t index_L = _indexingQueueSize;  // 100
+    uint32_t maxc = _indexingMaxC;  // 750
 
-    if (_query_scratch.size() == 0)
+    if (_query_scratch.size() == 0) // true
     {
+        // 在构建索引时，初始化临时存储空间以支持多线程的图构建操作
         initialize_query_scratch(5 + num_threads_index, index_L, index_L, index_R, maxc,
                                  _data_store->get_aligned_dim());
     }
 
-    generate_frozen_point();
-    link();
+    generate_frozen_point();    // 冻结点是索引中一个特殊的点，用于作为图的起始点或参考点，但这个函数直接return了
+    link(); // 核心
 
+    // 打印最大度、最小度、平均度以及度小于2的节点数量
     size_t max = 0, min = SIZE_MAX, total = 0, cnt = 0;
     for (size_t i = 0; i < _nd; i++)
     {
@@ -1559,45 +1591,37 @@ void Index<T, TagT, LabelT>::build_with_data_populated(const std::vector<TagT> &
 
     _has_built = true;
 }
+
+// build_memory_index.cpp 中调用的build就是它
 template <typename T, typename TagT, typename LabelT>
-void Index<T, TagT, LabelT>::_build(const DataType &data, const size_t num_points_to_load, TagVector &tags)
+void Index<T, TagT, LabelT>::build(const std::string &data_file, const size_t num_points_to_load,
+                                   IndexFilterParams &filter_params)
 {
-    try
-    {
-        this->build(std::any_cast<const T *>(data), num_points_to_load, tags.get<const std::vector<TagT>>());
-    }
-    catch (const std::bad_any_cast &e)
-    {
-        throw ANNException("Error: bad any cast in while building index. " + std::string(e.what()), -1);
-    }
-    catch (const std::exception &e)
-    {
-        throw ANNException("Error" + std::string(e.what()), -1);
-    }
-}
-template <typename T, typename TagT, typename LabelT>
-void Index<T, TagT, LabelT>::build(const T *data, const size_t num_points_to_load, const std::vector<TagT> &tags)
-{
-    if (num_points_to_load == 0)
-    {
-        throw ANNException("Do not call build with 0 points", -1, __FUNCSIG__, __FILE__, __LINE__);
-    }
-    if (_pq_dist)
-    {
-        throw ANNException("ERROR: DO not use this build interface with PQ distance", -1, __FUNCSIG__, __FILE__,
-                           __LINE__);
-    }
+    size_t points_to_load = num_points_to_load == 0 ? _max_points : num_points_to_load;
 
-    std::unique_lock<std::shared_timed_mutex> ul(_update_lock);
-
+    auto s = std::chrono::high_resolution_clock::now();
+    if (filter_params.label_file == "") // 关键，如果是空字符串就不用考虑其他东西了
     {
-        std::unique_lock<std::shared_timed_mutex> tl(_tag_lock);
-        _nd = num_points_to_load;
-
-        _data_store->populate_data(data, (location_t)num_points_to_load);
+        this->build(data_file.c_str(), points_to_load);
     }
-
-    build_with_data_populated(tags);
+    else
+    {
+        // TODO: this should ideally happen in save()
+        // 按代码给的案例，结果应该是/mnt/data/my_ann_index_label_formatted.txt
+        // yjy写的是/data/filter-yjy/diskann/index/{dataset}_{query_id}_filtered/__label_formatted.txt
+        std::string labels_file_to_use = filter_params.save_path_prefix + "_label_formatted.txt";
+        std::string mem_labels_int_map_file = filter_params.save_path_prefix + "_labels_map.txt";
+        convert_labels_string_to_int(filter_params.label_file, labels_file_to_use, mem_labels_int_map_file,
+                                     filter_params.universal_label);
+        if (filter_params.universal_label != "")
+        {
+            LabelT unv_label_as_num = 0;
+            this->set_universal_label(unv_label_as_num);
+        }
+        this->build_filtered_index(data_file.c_str(), labels_file_to_use, points_to_load);
+    }
+    std::chrono::duration<double> diff = std::chrono::high_resolution_clock::now() - s;
+    std::cout << "Indexing time: " << diff.count() << "\n";
 }
 
 template <typename T, typename TagT, typename LabelT>
@@ -1657,7 +1681,7 @@ void Index<T, TagT, LabelT>::build(const char *filename, const size_t num_points
 
     // REFACTOR PQ TODO: We can remove this if and add a check in the InMemDataStore
     // to not populate_data if it has been called once.
-    if (_pq_dist)
+    if (_pq_dist)   // false
     {
 #ifdef EXEC_ENV_OLS
         std::stringstream ss;
@@ -1675,8 +1699,8 @@ void Index<T, TagT, LabelT>::build(const char *filename, const size_t num_points
         _pq_data_store->populate_data(filename, 0U);
 #endif
     }
-
-    _data_store->populate_data(filename, 0U);
+    // _data_store是Index类的私有成员变量，在in_mem_data_store.cpp中
+    _data_store->populate_data(filename, 0U);   
     diskann::cout << "Using only first " << num_points_to_load << " from file.. " << std::endl;
 
     {
@@ -1684,6 +1708,23 @@ void Index<T, TagT, LabelT>::build(const char *filename, const size_t num_points
         _nd = num_points_to_load;
     }
     build_with_data_populated(tags);
+}
+
+template <typename T, typename TagT, typename LabelT>
+void Index<T, TagT, LabelT>::_build(const DataType &data, const size_t num_points_to_load, TagVector &tags)
+{
+    try
+    {
+        this->build(std::any_cast<const T *>(data), num_points_to_load, tags.get<const std::vector<TagT>>());
+    }
+    catch (const std::bad_any_cast &e)
+    {
+        throw ANNException("Error: bad any cast in while building index. " + std::string(e.what()), -1);
+    }
+    catch (const std::exception &e)
+    {
+        throw ANNException("Error" + std::string(e.what()), -1);
+    }
 }
 
 template <typename T, typename TagT, typename LabelT>
@@ -1729,33 +1770,30 @@ void Index<T, TagT, LabelT>::build(const char *filename, const size_t num_points
     build(filename, num_points_to_load, tags);
 }
 
-template <typename T, typename TagT, typename LabelT>
-void Index<T, TagT, LabelT>::build(const std::string &data_file, const size_t num_points_to_load,
-                                   IndexFilterParams &filter_params)
-{
-    size_t points_to_load = num_points_to_load == 0 ? _max_points : num_points_to_load;
 
-    auto s = std::chrono::high_resolution_clock::now();
-    if (filter_params.label_file == "")
+template <typename T, typename TagT, typename LabelT>
+void Index<T, TagT, LabelT>::build(const T *data, const size_t num_points_to_load, const std::vector<TagT> &tags)
+{
+    if (num_points_to_load == 0)
     {
-        this->build(data_file.c_str(), points_to_load);
+        throw ANNException("Do not call build with 0 points", -1, __FUNCSIG__, __FILE__, __LINE__);
     }
-    else
+    if (_pq_dist)
     {
-        // TODO: this should ideally happen in save()
-        std::string labels_file_to_use = filter_params.save_path_prefix + "_label_formatted.txt";
-        std::string mem_labels_int_map_file = filter_params.save_path_prefix + "_labels_map.txt";
-        convert_labels_string_to_int(filter_params.label_file, labels_file_to_use, mem_labels_int_map_file,
-                                     filter_params.universal_label);
-        if (filter_params.universal_label != "")
-        {
-            LabelT unv_label_as_num = 0;
-            this->set_universal_label(unv_label_as_num);
-        }
-        this->build_filtered_index(data_file.c_str(), labels_file_to_use, points_to_load);
+        throw ANNException("ERROR: DO not use this build interface with PQ distance", -1, __FUNCSIG__, __FILE__,
+                           __LINE__);
     }
-    std::chrono::duration<double> diff = std::chrono::high_resolution_clock::now() - s;
-    std::cout << "Indexing time: " << diff.count() << "\n";
+
+    std::unique_lock<std::shared_timed_mutex> ul(_update_lock);
+
+    {
+        std::unique_lock<std::shared_timed_mutex> tl(_tag_lock);
+        _nd = num_points_to_load;
+
+        _data_store->populate_data(data, (location_t)num_points_to_load);   // 用于将数据加载到 _data_store 中
+    }
+
+    build_with_data_populated(tags);    // 构建的核心函数
 }
 
 template <typename T, typename TagT, typename LabelT>
